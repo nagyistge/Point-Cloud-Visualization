@@ -1,41 +1,55 @@
+/***************************************************************************
+*                                                                         *
+*   Developed By Deniz Beker											  *
+*	Used in MSc Thesis Presentation.									  *
+*	2014, Yeditepe University, Istanbul,								  *		
+*																		  *
+*	This code is loading all the point cloud meshes which are captured	  *
+*	with 15 degree differences from center of a room. Applies			  *
+*	segmentation to each point cloud to extract the planar surfaces (i.e. *
+*	floor, ceiling, walls).	Then, it finds the boundaries of each         *
+*	cloud objects and creates a fake bounding box for all of them		  *
+*																		  *
+*   https://github.com/dBeker                                             *
+*                                                                         *
+***************************************************************************/
+
+// General Headers
 #include <iostream>
+
+// Boost - Threading purpose
 #include <boost/thread/thread.hpp>
-#include <pcl/io/pcd_io.h>
-#include <pcl/point_types.h>
-#include <boost/thread/thread.hpp>
+
+// PCL Includes
 #include <pcl/common/transforms.h>
-#include <pcl/common/common_headers.h>
-#include <pcl/features/normal_3d.h>
 #include <pcl/io/pcd_io.h>
+
+#include <pcl/point_types.h>
 #include <pcl/visualization/pcl_visualizer.h>
-#include <pcl/console/parse.h>
-
-#include <pcl/ModelCoefficients.h>
-#include <pcl/sample_consensus/method_types.h>
-#include <pcl/sample_consensus/model_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
-#include <pcl/visualization/cloud_viewer.h>
 
-// OpenCV
-#include <opencv2\core\core.hpp>
-#include <opencv2\highgui\highgui.hpp>
-#include <opencv2\imgproc\imgproc.hpp>
+#define BASE_PATH "D:\\Freelance\\Self\\Github\\Point-Cloud-Visualization\\Data\\"
+#define START_CNT 1
+#define FINISH_CNT 12
+#define EXTENSION ".pcd"
 
 using namespace pcl;
+using namespace std;
 
-std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> vec;
-std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> visualizeVec;
-//pcl::visualization::CloudViewer viewer ("Simple Cloud Viewer");
-double angle = 0;
+vector<PointCloud<PointXYZRGB>::Ptr> visualizeVec;
+
+double angle = 15;
 boost::mutex mutex;
 bool newCommand = false;
 
-cv::Vec3f cloudMidPoint(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud)
+// Calculates central point of a vector by using arithmetic mean
+// Notice that, this mean calculation is vulnerable to the noise on point cloud data
+Eigen::Vector3f cloudCentralPoint(PointCloud<PointXYZRGB>::Ptr cloud)
 {
-	float xyz[3] = {0.0f, 0.0f, 0.0f}; 
+	float xyz[3] = { 0.0f, 0.0f, 0.0f };
 	float count = 0.0f;
 
-	for(size_t i(0); i < cloud->size(); i++)
+	for (size_t i(0); i < cloud->size(); i++)
 	{
 		xyz[0] = xyz[0] + (float)cloud->at(i).x;
 		xyz[1] = xyz[1] + (float)cloud->at(i).y;
@@ -46,204 +60,234 @@ cv::Vec3f cloudMidPoint(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud)
 	xyz[0] = xyz[0] / count;
 	xyz[1] = xyz[1] / count;
 	xyz[2] = xyz[2] / count;
-
-	return cv::Vec3f(xyz[0],xyz[1],xyz[2]);
+	
+	return Eigen::Vector3f(xyz[0], xyz[1], xyz[2]);
 }
 
-void turnCloudViewPoint(pcl::PointCloud<pcl::PointXYZRGB>::Ptr* cloud, cv::Vec3f midPoint, double angle_x, double angle_y, double angle_z)
+// Rotate point cloud based on 
+void rotateCloud(PointCloud<PointXYZRGB>::Ptr* cloud, Eigen::Vector3f midPoint, double angle_x, double angle_y, double angle_z)
 {
+	
 
 	Eigen::Matrix4f transformationMatrix;
-	pcl::PointCloud<pcl::PointXYZRGB>::Ptr rotatedCloud (new pcl::PointCloud<pcl::PointXYZRGB>); 
-	rotatedCloud = *cloud;
 
 	float angle;
-	// Rotate 
-	if(angle_x != 0)
+
+	// Rotate Based on X-Axis
+	if (angle_x != 0)
 	{
-		angle = M_PI * angle_x/180;
+		angle = M_PI * angle_x / 180;
 		transformationMatrix <<
 			1, 0, 0, 0,
 			0, cos(angle), -sin(angle), 0,
-			0, sin(angle), cos(angle), 0,		
+			0, sin(angle), cos(angle), 0,
 			0, 0, 0, 1;
-		pcl::transformPointCloud(*rotatedCloud,*rotatedCloud,transformationMatrix); 
+		transformPointCloud(**cloud, **cloud, transformationMatrix);
 	}
 
-	if(angle_y != 0)
+	// Rotate Based on Y-Axis
+	if (angle_y != 0)
 	{
-		angle = M_PI * angle_y/360;
+		angle = M_PI * angle_y / 360;
 		transformationMatrix <<
-		cos(angle), 0, sin(angle), 0,
-		0, 1, 0, 0,
-		-sin(angle), 0, cos(angle), 0,
-		0, 0, 0, 1;
-		pcl::transformPointCloud(*rotatedCloud,*rotatedCloud,transformationMatrix); 
+			cos(angle), 0, sin(angle), 0,
+			0, 1, 0, 0,
+			-sin(angle), 0, cos(angle), 0,
+			0, 0, 0, 1;
+		transformPointCloud(**cloud, **cloud, transformationMatrix);
 	}
 
-	if(angle_z!= 0)
+	// Rotate Based on Z-Axis
+	if (angle_z != 0)
 	{
-		angle = M_PI * angle_z/360;
+		angle = M_PI * angle_z / 360;
 		transformationMatrix <<
-		cos(angle), -sin(angle), 0, 0,
-		sin(angle), cos(angle), 0, 0,
-		0, 0, 1, 0,
-		0, 0, 0, 1;
-		pcl::transformPointCloud(*rotatedCloud,*rotatedCloud,transformationMatrix); 
+			cos(angle), -sin(angle), 0, 0,
+			sin(angle), cos(angle), 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1;
+		transformPointCloud(**cloud, **cloud, transformationMatrix);
 	}
-	// Push Back to Cloud Vector
-	*cloud = rotatedCloud;
 }
 
+// Loader and processor thread. 
 void process()
 {
-	for(size_t i(0); i<4; i++)
-	{
-
-		for(size_t j(1); j<4; j++)
-		{
-			pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-			if (pcl::io::loadPCDFile<pcl::PointXYZRGB> ("F:\\x64\\Test\\Registered_" + std::to_string((_Longlong)i)+"_"+std::to_string((_Longlong)j)+".pcd", *cloud) == -1)
-			{
-				//std::cout << "Error Load : " << "F:\\x64\\Test1\\Registered_" + std::to_string((_Longlong)i)+"_"+std::to_string((_Longlong)j)+".pcd" <<std::endl;
-				continue;
-			}
-			//std::cout << "Loaded : " << "F:\\x64\\Test1\\Registered_" + std::to_string((_Longlong)i)+"_"+std::to_string((_Longlong)j)+".pcd" <<std::endl;
-			cv::Vec3f midPoint = cloudMidPoint(cloud);
-			turnCloudViewPoint(&cloud,midPoint,0,angle,0);
-			vec.push_back(cloud);
-		}		 
-	}
-	for(size_t m(0); m<vec.size(); m++)
-	{
-		pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
-		pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
-		// Create the segmentation object
-		pcl::SACSegmentation<pcl::PointXYZRGB> seg;
-		// Optional
-		seg.setOptimizeCoefficients (true);
-		// Mandatory
-		seg.setModelType (pcl::SACMODEL_PLANE);
-		seg.setMethodType (pcl::SAC_RANSAC);
-		seg.setDistanceThreshold (0.01);
-
-		seg.setInputCloud (vec.at(m));
-		seg.segment (*inliers, *coefficients);
-
-		pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_r (new pcl::PointCloud<pcl::PointXYZRGB>), cloud_projected (new pcl::PointCloud<pcl::PointXYZRGB>) ;
-
+	// Iterate through all point clouds
 #pragma omp parallel for
-		for (size_t i = 0; i < inliers->indices.size (); ++i)
+	for (size_t i = START_CNT; i <= FINISH_CNT; i++)
+	{
+		// Load pcd file to cloud object
+		PointCloud<PointXYZRGB>::Ptr cloud(new PointCloud<PointXYZRGB>);
+		std::string pointCloudPath = BASE_PATH + std::to_string((_Longlong)i) + EXTENSION;
+
+		if (io::loadPCDFile<PointXYZRGB>(pointCloudPath, *cloud) == -1)
 		{
-			pcl::PointXYZRGB point;
-			point.x = vec.at(m)->points[inliers->indices[i]].x;
-			point.y = vec.at(m)->points[inliers->indices[i]].y;
-			point.z = vec.at(m)->points[inliers->indices[i]].z;
-			cloud_r->points.push_back (point);
+			std::cout << "Error Load : " << pointCloudPath << std::endl;
+			continue;
+		}
+		std::cout << "Loaded : " << pointCloudPath << std::endl;
+
+
+		// Point cloud is now loaded.
+		// Define the parameters
+
+		ModelCoefficients::Ptr coefficients(new ModelCoefficients);	// Segmentation Coefficients
+		PointIndices::Ptr inliers(new PointIndices);
+		SACSegmentation<PointXYZRGB> seg;	// Segmentation Object
+		
+		// Calculate Central Point of Cloud
+		Eigen::Vector3f midPoint = cloudCentralPoint(cloud);
+		// Rotate Cloud based on given angle
+		rotateCloud(&cloud, midPoint, 0, angle, 0);
+
+		// Set segmentation parameters
+		seg.setOptimizeCoefficients(true);
+		seg.setModelType(SACMODEL_PLANE);	// Extract only planes
+		seg.setMethodType(SAC_RANSAC);		// Use RANSAC to improve the plane segmentation quality
+		seg.setDistanceThreshold(0.01);		// Maximum acceptable distance between points
+		seg.setInputCloud(cloud);			// Set input point cloud
+		seg.segment(*inliers, *coefficients);	// Apply Segmentation
+			
+
+		PointCloud<PointXYZRGB>::Ptr cloud_segmented(new PointCloud<PointXYZRGB>);
+		// Get all the inlier points and discard the outliers
+#pragma omp parallel for
+		for (size_t i = 0; i < inliers->indices.size(); ++i)
+		{
+			PointXYZRGB point;
+			point.x = cloud->points[inliers->indices[i]].x;
+			point.y = cloud->points[inliers->indices[i]].y;
+			point.z = cloud->points[inliers->indices[i]].z;
+			point.r = cloud->points[inliers->indices[i]].r;
+			point.g = cloud->points[inliers->indices[i]].g;
+			point.b = cloud->points[inliers->indices[i]].b;
+
+			cloud_segmented->points.push_back(point);
 		}
 
-		
+		// Calculate maximum and minimum of segmented point cloud
+		PointXYZRGB first_min, first_max;
+		getMinMax3D(*cloud_segmented, first_min, first_max);
 
-		float boundaries[6];
-		pcl::PointXYZRGB first_min, first_max;
-		pcl::PointCloud<pcl::PointXYZRGB> m_ptrCloud(*cloud_r);
-		pcl::getMinMax3D(m_ptrCloud, first_min, first_max); 
-		boundaries[0] = first_min.x;
-		boundaries[1] = first_min.y;
-		boundaries[2] = first_min.z;
-		boundaries[3] = first_max.x;
-		boundaries[4] = first_max.y;
-		boundaries[5] = first_max.z;
-		//std::cout << first_min << " " << first_max << std::endl;
+		// Create bounding point cloud
+		PointCloud<PointXYZRGB>::Ptr cloud_boundary(new PointCloud<PointXYZRGB>);
 
-		pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-		for(int i=first_min.x; i<first_max.x;i++)
+		// Populate boundary cloud with points
+		for (int i = first_min.x; i < first_max.x;i++)
 		{
-			for(int j=first_min.y; j<first_max.y;j++)
+			for (int j = first_min.y; j < first_max.y;j++)
 			{
-				for(int k=first_min.z; k<first_max.z;k++)
+				for (int k = first_min.z; k < first_max.z;k++)
 				{
-					pcl::PointXYZRGB point;
-					point.x=i;
-					point.y=j;
-					point.z=k;
-					cloud->push_back(point);
-					k=k+24;
+					PointXYZRGB point;
+					point.x = i;
+					point.y = j;
+					point.z = k;
+					cloud_boundary->push_back(point);
+					k = k + 24;
 				}
-				j=j+24;
+				j = j + 24;
 			}
-			i=i+24;
+			i = i + 24;
 		}
+		// Insert point cloud to visualization buffer
 		mutex.lock();
-		visualizeVec.push_back(cloud);
+		visualizeVec.push_back(cloud_boundary);
 		mutex.unlock();
-		
+
 	}
+
+	// When all the loading is completed, set new command flag to load clouds in viewer
 	mutex.lock();
-	newCommand=true;
+	newCommand = true;
 	mutex.unlock();
-	
+
+	// Wait for input from user
 	char value;
 	std::cin >> value;
-	std::cout << value;
-	if(value == 'd')
+
+	// Based on input, set angle
+	// TODO: Protection against other values
+	if (value == 'd')
 	{
 		angle += 15;
 	}
-	else if(value == 'a')
+	else if (value == 'a')
 	{
 		angle += -15;
 	}
-	vec.clear();
-	visualizeVec.clear();
-	process();
 
+	// Call self again to process with new angle value
+	// Note that it is not the most efficient method. In production, this part has to be improved.
+	// Ideally, input pcd files have to be kept in cache and rotation has to be applied only 
+	// TODO : Improve performance
+	process();
 }
 
-void turn()
+// Visualization Thread Function
+void visualize()
 {
-	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer (new pcl::visualization::PCLVisualizer ("3D Viewer"));
-	viewer->setBackgroundColor (0, 0, 0);
-	viewer->addCoordinateSystem (100.0, 0);
-	viewer->initCameraParameters ();
-	while (!viewer->wasStopped ())
+	// Create Viewer Object
+	boost::shared_ptr<visualization::PCLVisualizer> viewer(new visualization::PCLVisualizer("3D Viewer"));
+
+	// Set Viewer Object's Parameters
+	viewer->setBackgroundColor(0, 0, 0);
+	viewer->addCoordinateSystem(100.0, 0);
+	viewer->initCameraParameters();
+
+	// Loop 
+	while (!viewer->wasStopped())
 	{
-		mutex.lock();
-		if(newCommand)
+		// If new point cloud is inserted to the list, clear all existing shapes and add all of them again.
+		// This is not an incremental insertion.
+		// TODO: Improve the performance issue in here
+		if (newCommand)
 		{
+			mutex.lock();
+
 			viewer->removeAllPointClouds();
 			viewer->removeAllShapes();
 
-			for(int i(0); i<visualizeVec.size(); i++)
+			// Iterate all visualization objects
+			for (size_t i = 0; i < visualizeVec.size(); i++)
 			{
-				pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> rgb(visualizeVec.at(i), std::rand()%255, std::rand()%255,std::rand()%255);
-				viewer->addPointCloud<pcl::PointXYZRGB> (visualizeVec.at(i), rgb, "cloud"+std::to_string((_Longlong)i));
-				//pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> rgb(vec.at(i), 0, 50+i*10, 50+i*10);				
-				//viewer->addPointCloud<pcl::PointXYZRGB> (vec.at(i), rgb, "cloud"+std::to_string((_Longlong)i));
-				viewer->setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 20, "cloud"+std::to_string((_Longlong)i));
+				// Create fake color
+				visualization::PointCloudColorHandlerCustom<PointXYZRGB> rgb(visualizeVec.at(i), std::rand() % 255, std::rand() % 255, std::rand() % 255);
+
+				// Give all of the point clouds a unique id and add them to viewer
+				viewer->addPointCloud<PointXYZRGB>(visualizeVec.at(i), rgb, "cloud" + std::to_string((_Longlong)i));
+
+				// Set rendering properties
+				viewer->setPointCloudRenderingProperties(visualization::PCL_VISUALIZER_POINT_SIZE, 20, "cloud" + std::to_string((_Longlong)i));
 			}
 
-			newCommand=false;
+			// Clear new command flag
+			newCommand = false;
+
+			// Clear visualization buffer
+			visualizeVec.clear();
+
+			// Unlock mutex
 			mutex.unlock();
 		}
 		else
 		{
-			mutex.unlock();
+			// Visualization object
 			viewer->spinOnce(100);
-			boost::this_thread::sleep (boost::posix_time::microseconds (10000));
+			boost::this_thread::sleep(boost::posix_time::microseconds(10000));
 		}
 	}
 }
 
-int main (int argc, char** argv)
+int main(int argc, char** argv)
 {
 
-	boost::thread* th1 = new boost::thread(turn);
+	boost::thread* th1 = new boost::thread(visualize);
 	boost::thread* th2 = new boost::thread(process);
 
 	th1->join();
 	th2->join();
 
-	system("pause");
-	return (0);
+	return 0;
 }

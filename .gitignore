@@ -27,3 +27,6 @@
 *.exe
 *.out
 *.app
+
+*.tlog
+/Source/x64
