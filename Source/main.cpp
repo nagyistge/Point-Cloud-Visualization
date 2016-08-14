@@ -28,7 +28,7 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/segmentation/sac_segmentation.h>
 
-#define BASE_PATH "..\\..\\..\\Data\\"
+#define BASE_PATH "D:\\Freelance\\Self\\Github\\Point-Cloud-Visualization\\Data\\"
 #define START_CNT 1
 #define FINISH_CNT 12
 #define EXTENSION ".pcd"
